@@ -1,0 +1,63 @@
+pipeline {
+    agent any
+
+    parameters {
+        booleanParam(name: 'autoApprove', defaultValue: false, description: 'Automatically run apply after generating plan?')
+        choice(name: 'action', choices: ['apply', 'destroy'], description: 'Select the action to perform')
+    }
+
+    environment {
+        PACKER_PATH = '/path/to/packer'
+        AWS_REGION = 'your_aws_region'
+        AWS_ACCESS_KEY_ID = credentials('your_aws_access_key_id')
+        AWS_SECRET_ACCESS_KEY = credentials('your_aws_secret_access_key')
+        PACKER_TEMPLATE = 'path/to/your/packer/template.json'
+        AMI_NAME = 'your-ami-name'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/CodeSagarOfficial/jenkins-scripts.git'
+            }
+        }
+        stage('Build AMI') {
+            steps {
+                script {
+                  sh "${PACKER_PATH} build ${PACKER_TEMPLATE}"
+                }
+            }
+        }
+        stage('Terraform init') {
+            steps {
+                sh ("terraform init -reconfigure")
+            }
+        }
+        stage('Plan') {
+            steps {
+                sh 'terraform plan -out tfplan'
+                sh 'terraform show -no-color tfplan > tfplan.txt'
+            }
+        }
+        stage('Apply / Destroy') {
+            steps {
+                script {
+                    if (params.action == 'apply') {
+                        if (!params.autoApprove) {
+                            def plan = readFile 'tfplan.txt'
+                            input message: "Do you want to apply the plan?",
+                            parameters: [text(name: 'Plan', description: 'Please review the plan', defaultValue: plan)]
+                        }
+
+                    sh 'terraform ${action} -input=false tfplan'
+                    } else if (params.action == 'destroy') {
+                        sh 'terraform ${action} --auto-approve'
+                    } else {
+                        error "Invalid action selected. Please choose either 'apply' or 'destroy'."
+                    }
+                }
+            }
+        }
+
+    }
+}
